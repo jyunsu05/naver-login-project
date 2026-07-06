@@ -6,6 +6,8 @@ const fs = require('fs');
 const { upsertUser } = require('./user-insert');
 const { validateLoginBody, loginSuccess, loginError, formatUserOutput } = require('./login-response');
 const naverAuth = require('./naver-auth');
+const { saveUserTokens } = require('./user-tokens');
+const { ensureTokenColumns } = require('./user-schema');
 const logger = require('./logger');
 const { config, testConnection } = require('./dbconnect');
 
@@ -127,8 +129,14 @@ app.get('/auth/naver/callback', async (req, res) => {
       name: mapped.name,
     });
 
-    const response = loginSuccess(user);
-    logger.log('NAVER', '사용자 정보\n' + formatUserOutput(user));
+    const { user: savedUser, sessionToken } = await saveUserTokens(user.uid, {
+      accessToken: tokenData.access_token,
+      refreshToken: tokenData.refresh_token,
+      expiresIn: tokenData.expires_in,
+    });
+
+    const response = loginSuccess(savedUser, { sessionToken });
+    logger.log('NAVER', '사용자 정보\n' + formatUserOutput(savedUser));
     logger.log('NAVER', '응답 JSON', response);
     return sendLoginResultPage(res, response);
   } catch (err) {
@@ -177,6 +185,7 @@ app.listen(PORT, HOST, async () => {
   });
 
   try {
+    await ensureTokenColumns();
     const version = await testConnection();
     logger.log('SERVER', 'DB 연결 확인 완료', { version });
   } catch (err) {

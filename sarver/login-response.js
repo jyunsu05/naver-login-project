@@ -27,14 +27,22 @@ function toUserDto(user) {
   };
 }
 
-function loginSuccess(user) {
-  return {
+function loginSuccess(user, options = {}) {
+  const reused = Boolean(options.reused);
+  const response = {
     success: true,
-    message: '로그인 성공',
+    message: reused ? '자동 로그인 성공' : '로그인 성공',
     data: {
       user: toUserDto(user),
+      loginType: reused ? 'session' : 'naver',
     },
   };
+
+  if (options.sessionToken) {
+    response.data.sessionToken = options.sessionToken;
+  }
+
+  return response;
 }
 
 function formatUserOutput(user) {
