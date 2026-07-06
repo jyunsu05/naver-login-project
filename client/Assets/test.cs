@@ -7,10 +7,14 @@ using UnityEngine.UI;
 public class test : MonoBehaviour
 {
     [SerializeField] private string loginUrl = "http://127.0.0.1:3000/auth/naver";
+    [SerializeField] private string devLoginUrl = "http://127.0.0.1:3000/login/dev";
     [SerializeField] private string authMeUrl = "http://127.0.0.1:3000/auth/me";
+    [SerializeField] private string authRefreshUrl = "http://127.0.0.1:3000/auth/refresh";
+    [SerializeField] private string logoutApiUrl = "http://127.0.0.1:3000/auth/logout";
 
     private WebViewObject webViewObject;
     private bool startupAutoLoginAttempted;
+    private bool isLoggingIn;
 
     private void Start()
     {
@@ -20,7 +24,7 @@ public class test : MonoBehaviour
             var button = buttonObject.GetComponent<Button>();
             if (button != null)
             {
-                button.onClick.AddListener(OpenNaverLogin);
+                button.onClick.AddListener(OnNaverLoginClicked);
             }
         }
 
@@ -41,6 +45,70 @@ public class test : MonoBehaviour
         }
 
         Debug.Log("[Naver] 앱 시작 시 /auth/me 자동 로그인 시도");
+        yield return CallAuthMe(sessionToken, openOAuthOnFail: false);
+    }
+
+    private void OnNaverLoginClicked()
+    {
+        if (isLoggingIn)
+        {
+            return;
+        }
+
+        var sessionToken = NaverLoginSession.GetToken();
+        if (!string.IsNullOrEmpty(sessionToken))
+        {
+            StartCoroutine(CallAuthMe(sessionToken, openOAuthOnFail: true));
+            return;
+        }
+
+        OpenOAuth();
+    }
+
+    public void OpenNaverLogin()
+    {
+        OnNaverLoginClicked();
+    }
+
+    public void Login()
+    {
+        OnNaverLoginClicked();
+    }
+
+    public void OpenDevLogin()
+    {
+        OpenUrl(devLoginUrl);
+    }
+
+    public void CloseWebView()
+    {
+        if (webViewObject == null)
+        {
+            return;
+        }
+
+        webViewObject.SetVisibility(false);
+    }
+
+    public void Logout()
+    {
+        var sessionToken = NaverLoginSession.GetToken();
+        if (!string.IsNullOrEmpty(sessionToken))
+        {
+            StartCoroutine(SendLogout(sessionToken));
+        }
+        else
+        {
+            NaverLoginSession.ClearToken();
+        }
+    }
+
+    private IEnumerator CallAuthMe(string sessionToken, bool openOAuthOnFail)
+    {
+        isLoggingIn = true;
+        var completed = false;
+        var failed = false;
+
         yield return NaverLoginSession.PostAuth(
             authMeUrl,
             sessionToken,
@@ -48,11 +116,79 @@ public class test : MonoBehaviour
             {
                 Debug.Log($"[Naver] /auth/me 응답: {responseText}");
                 HandleLoginPayload(responseText);
+                completed = true;
             },
-            error => Debug.LogWarning($"[Naver] /auth/me 실패: {error}"));
+            error =>
+            {
+                Debug.LogWarning($"[Naver] /auth/me 실패: {error}");
+                failed = true;
+            });
+
+        if (failed)
+        {
+            yield return CallAuthRefresh(sessionToken, openOAuthOnFail);
+            isLoggingIn = false;
+            yield break;
+        }
+
+        if (!completed)
+        {
+            isLoggingIn = false;
+            yield break;
+        }
+
+        isLoggingIn = false;
     }
 
-    public void OpenNaverLogin()
+    private IEnumerator CallAuthRefresh(string sessionToken, bool openOAuthOnFail)
+    {
+        var completed = false;
+        var failed = false;
+
+        yield return NaverLoginSession.PostAuth(
+            authRefreshUrl,
+            sessionToken,
+            responseText =>
+            {
+                Debug.Log($"[Naver] /auth/refresh 응답: {responseText}");
+                HandleLoginPayload(responseText);
+                completed = true;
+            },
+            error =>
+            {
+                Debug.LogWarning($"[Naver] /auth/refresh 실패: {error}");
+                failed = true;
+            });
+
+        if (failed || !completed)
+        {
+            NaverLoginSession.ClearToken();
+            if (openOAuthOnFail)
+            {
+                OpenOAuth();
+            }
+        }
+    }
+
+    private IEnumerator SendLogout(string sessionToken)
+    {
+        yield return NaverLoginSession.PostAuth(
+            logoutApiUrl,
+            sessionToken,
+            _ =>
+            {
+                NaverLoginSession.ClearToken();
+                Debug.Log("[Naver] 로그아웃 완료");
+            },
+            error => Debug.LogWarning($"[Naver] 로그아웃 요청 실패: {error}"));
+    }
+
+    private void OpenOAuth()
+    {
+        OpenUrl(loginUrl);
+    }
+
+    private void OpenUrl(string url)
     {
         if (webViewObject == null)
         {
@@ -73,12 +209,7 @@ public class test : MonoBehaviour
 
         webViewObject.SetMargins(0, 0, 0, 0);
         webViewObject.SetVisibility(true);
-        webViewObject.LoadURL(loginUrl);
-    }
-
-    public void Login()
-    {
-        OpenNaverLogin();
+        webViewObject.LoadURL(url);
     }
 
     private void HandleLoginPayload(string message)
@@ -120,13 +251,51 @@ public class test : MonoBehaviour
 
     private void OnWebMessage(string message)
     {
-        Debug.Log($"[Naver] 응답 JSON: {message}");
+        Debug.Log($"[Naver] WebView 메시지: {message}");
         HandleLoginPayload(message);
+        CloseWebView();
+    }
 
-        if (webViewObject != null)
+    private void OnGUI()
+    {
+        if (!Application.isPlaying)
         {
-            webViewObject.SetVisibility(false);
+            return;
         }
+
+        const int width = 320;
+        const int height = 56;
+        const int x = 20;
+        var y = 20;
+
+        GUI.backgroundColor = new Color(0.01f, 0.78f, 0.35f);
+        if (GUI.Button(new Rect(x, y, width, height), "네이버 로그인"))
+        {
+            OnNaverLoginClicked();
+        }
+
+        y += height + 12;
+        GUI.backgroundColor = new Color(0.2f, 0.45f, 0.95f);
+        if (GUI.Button(new Rect(x, y, width, height), "개발용 로그인"))
+        {
+            OpenDevLogin();
+        }
+
+        y += height + 12;
+        GUI.backgroundColor = new Color(0.85f, 0.3f, 0.25f);
+        if (GUI.Button(new Rect(x, y, width, height), "웹뷰 닫기"))
+        {
+            CloseWebView();
+        }
+
+        y += height + 12;
+        GUI.backgroundColor = Color.gray;
+        if (GUI.Button(new Rect(x, y, width, height), "로그아웃"))
+        {
+            Logout();
+        }
+
+        GUI.backgroundColor = Color.white;
     }
 
     private void OnDestroy()
@@ -137,7 +306,7 @@ public class test : MonoBehaviour
             var button = buttonObject.GetComponent<Button>();
             if (button != null)
             {
-                button.onClick.RemoveListener(OpenNaverLogin);
+                button.onClick.RemoveListener(OnNaverLoginClicked);
             }
         }
     }
