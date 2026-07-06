@@ -12,6 +12,7 @@
     "mysql:insert-user": "node test-user-insert.js",
     "mysql:select-users": "node test-user-select.js",
     "login:test-response": "node test-login-response.js",
+    "auth:test": "node test-auth-flow.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],
