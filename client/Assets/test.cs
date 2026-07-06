@@ -13,8 +13,14 @@ public class test : MonoBehaviour
     [SerializeField] private string logoutApiUrl = "http://127.0.0.1:3000/auth/logout";
 
     private WebViewObject webViewObject;
+    private NaverLoginCallbackListener callbackListener;
     private bool startupAutoLoginAttempted;
     private bool isLoggingIn;
+
+    private void Awake()
+    {
+        EnsureCallbackListener();
+    }
 
     private void Start()
     {
@@ -33,6 +39,37 @@ public class test : MonoBehaviour
             startupAutoLoginAttempted = true;
             StartCoroutine(TryStartupAutoLogin());
         }
+    }
+
+    private void EnsureCallbackListener()
+    {
+        callbackListener = FindAnyObjectByType<NaverLoginCallbackListener>();
+        if (callbackListener != null)
+        {
+            callbackListener.OnTokenReceived -= HandleCallbackToken;
+            callbackListener.OnTokenReceived += HandleCallbackToken;
+            callbackListener.OnErrorReceived -= HandleCallbackError;
+            callbackListener.OnErrorReceived += HandleCallbackError;
+            return;
+        }
+
+        var listenerObject = new GameObject("NaverLoginCallbackListener");
+        callbackListener = listenerObject.AddComponent<NaverLoginCallbackListener>();
+        callbackListener.OnTokenReceived += HandleCallbackToken;
+        callbackListener.OnErrorReceived += HandleCallbackError;
+    }
+
+    private void HandleCallbackToken(string sessionToken)
+    {
+        NaverLoginSession.SaveToken(sessionToken);
+        CloseWebView();
+        StartCoroutine(CallAuthMe(sessionToken, openOAuthOnFail: false));
+    }
+
+    private void HandleCallbackError(string message)
+    {
+        Debug.LogWarning($"[Naver] OAuth 콜백 오류: {message}");
+        CloseWebView();
     }
 
     private IEnumerator TryStartupAutoLogin()
@@ -300,6 +337,12 @@ public class test : MonoBehaviour
 
     private void OnDestroy()
     {
+        if (callbackListener != null)
+        {
+            callbackListener.OnTokenReceived -= HandleCallbackToken;
+            callbackListener.OnErrorReceived -= HandleCallbackError;
+        }
+
         var buttonObject = GameObject.Find("Button");
         if (buttonObject != null)
         {
