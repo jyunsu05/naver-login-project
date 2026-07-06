@@ -1,6 +1,6 @@
 const { query, execute } = require('./dbconnect');
 const { encryptText, decryptText } = require('./crypto-utils');
-const { issueSessionToken } = require('./session-jwt');
+const { issueSessionToken, verifyJwt } = require('./session-jwt');
 const logger = require('./logger');
 
 const USER_COLUMNS = `
@@ -63,8 +63,24 @@ async function saveUserTokens(uid, { accessToken, refreshToken, expiresIn }) {
   return { user, sessionToken };
 }
 
+async function getUserFromSessionToken(sessionToken) {
+  const payload = verifyJwt(sessionToken);
+  const user = await findUserByUid(payload.uid);
+
+  if (!user) {
+    throw new Error('사용자를 찾을 수 없습니다.');
+  }
+
+  if (Number(user.session_version || 0) !== Number(payload.sv || 0)) {
+    throw new Error('세션이 만료되었습니다. 다시 로그인해 주세요.');
+  }
+
+  return user;
+}
+
 module.exports = {
   saveUserTokens,
   findUserByUid,
   mapUserRow,
+  getUserFromSessionToken,
 };
