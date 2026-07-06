@@ -145,11 +145,24 @@ async function refreshSession(sessionToken) {
   return loginWithStoredTokens(user);
 }
 
+async function clearUserSession(uid) {
+  await execute(
+    `UPDATE users
+     SET naver_access_token = NULL,
+         naver_refresh_token = NULL,
+         token_expires_at = NULL,
+         session_version = session_version + 1
+     WHERE uid = ?`,
+    [uid],
+  );
+}
+
 module.exports = {
   saveUserTokens,
   findUserByUid,
   mapUserRow,
   getUserFromSessionToken,
   refreshSession,
+  clearUserSession,
   isAccessTokenExpired,
 };
