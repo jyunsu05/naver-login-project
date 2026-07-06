@@ -82,6 +82,29 @@ async function exchangeCodeForToken(code, state) {
   return data;
 }
 
+async function refreshAccessToken(refreshToken) {
+  if (!refreshToken) {
+    throw new Error('refresh token이 없습니다.');
+  }
+
+  const { clientId, clientSecret } = getConfig();
+  const params = new URLSearchParams({
+    grant_type: 'refresh_token',
+    client_id: clientId,
+    client_secret: clientSecret,
+    refresh_token: refreshToken,
+  });
+
+  const response = await fetch(`${NAVER_TOKEN_URL}?${params.toString()}`);
+  const data = await response.json();
+
+  if (!response.ok || data.error) {
+    throw new Error(data.error_description || data.error || '네이버 토큰 갱신 실패');
+  }
+
+  return data;
+}
+
 async function fetchProfile(accessToken) {
   const response = await fetch(NAVER_PROFILE_URL, {
     headers: {
@@ -109,6 +132,7 @@ function mapProfileToUser(profile) {
 module.exports = {
   buildAuthorizeUrl,
   exchangeCodeForToken,
+  refreshAccessToken,
   fetchProfile,
   mapProfileToUser,
   getConfig,
