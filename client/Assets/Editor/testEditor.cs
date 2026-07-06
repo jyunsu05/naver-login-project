@@ -10,9 +10,18 @@ public class testEditor : Editor
 
         EditorGUILayout.Space();
 
-        if (GUILayout.Button("Naver Login"))
+        var testComponent = (test)target;
+
+        if (GUILayout.Button("버튼 다시 연결"))
         {
-            ((test)target).OpenNaverLogin();
+            testComponent.BindUIButtons();
+            EditorUtility.SetDirty(testComponent);
+            Debug.Log("[Naver] Canvas 버튼을 라벨/이름 기준으로 다시 연결했습니다.");
+        }
+
+        if (GUILayout.Button("네이버 로그인 테스트"))
+        {
+            testComponent.OpenNaverLogin();
         }
     }
 }

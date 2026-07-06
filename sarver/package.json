@@ -7,12 +7,15 @@
     "start": "node app.js",
     "mysql:test": "node test-db.js",
     "mysql:create-users-table": "node create-users-table.js",
+    "mysql:create-high-scores-table": "node create-high-scores-table.js",
     "mysql:reset-users-table": "node reset-users-table.js",
     "mysql:test-user-schema": "node test-user-schema.js",
     "mysql:insert-user": "node test-user-insert.js",
     "mysql:select-users": "node test-user-select.js",
     "login:test-response": "node test-login-response.js",
     "auth:test": "node test-auth-flow.js",
+    "dev:reset": "node dev-full-reset.js",
+    "dev:reset:force": "node dev-full-reset.js --ignore-browser-lock",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],
@@ -22,6 +25,7 @@
   "dependencies": {
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
-    "mysql2": "^3.22.5"
+    "mysql2": "^3.22.5",
+    "sql.js": "^1.14.1"
   }
 }

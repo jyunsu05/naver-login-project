@@ -609,7 +609,15 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 40c2c525296278a4ebf185c6bb058c33, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::test
-  loginUrl: http://127.0.0.1:3000/login
+  loginUrl: http://127.0.0.1:3000/auth/naver
+  devLoginUrl: http://127.0.0.1:3000/login/dev
+  authMeUrl: http://127.0.0.1:3000/auth/me
+  authRefreshUrl: http://127.0.0.1:3000/auth/refresh
+  logoutApiUrl: http://127.0.0.1:3000/auth/logout
+  naverLoginButton: {fileID: 1559124628}
+  devLoginButton: {fileID: 0}
+  closeWebViewButton: {fileID: 0}
+  logoutButton: {fileID: 0}
 --- !u!4 &1325157866
 Transform:
   m_ObjectHideFlags: 0

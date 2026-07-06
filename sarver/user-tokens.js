@@ -157,6 +157,71 @@ async function clearUserSession(uid) {
   );
 }
 
+async function revokeStoredNaverAccessToken(user) {
+  if (!user?.naver_access_token) {
+    return { ok: false, skipped: true, message: '저장된 Naver access_token 없음' };
+  }
+
+  try {
+    await naverAuth.revokeAccessToken(user.naver_access_token);
+    logger.log('NAVER', 'Naver access_token 폐기 완료', { uid: user.uid });
+    return { ok: true, skipped: false, message: 'Naver access_token 폐기 완료' };
+  } catch (error) {
+    logger.warn('NAVER', 'Naver access_token 폐기 실패', { uid: user.uid, error: error.message });
+    return { ok: false, skipped: false, message: error.message };
+  }
+}
+
+async function revokeAllStoredNaverTokens() {
+  const rows = await query(
+    `SELECT uid, naver_access_token
+     FROM users
+     WHERE naver_access_token IS NOT NULL
+       AND naver_access_token != ''`,
+  );
+
+  const results = [];
+  for (const row of rows) {
+    const user = mapUserRow(row);
+    const outcome = await revokeStoredNaverAccessToken(user);
+    results.push({
+      uid: row.uid,
+      ...outcome,
+    });
+  }
+
+  return {
+    attempted: rows.length,
+    revoked: results.filter((item) => item.ok).length,
+    failed: results.filter((item) => !item.ok && !item.skipped).length,
+    skipped: results.filter((item) => item.skipped).length,
+    results,
+  };
+}
+
+async function logoutUserSession(sessionToken) {
+  const user = await getUserFromSessionToken(sessionToken);
+  const revokeResult = await revokeStoredNaverAccessToken(user);
+  await clearUserSession(user.uid);
+  return { user, revokeResult };
+}
+
+async function resetUserForDev(uid) {
+  const user = await findUserByUid(uid);
+  if (!user) {
+    throw new Error('사용자를 찾을 수 없습니다.');
+  }
+
+  const revokeResult = await revokeStoredNaverAccessToken(user);
+  const deleteResult = await execute('DELETE FROM users WHERE uid = ?', [uid]);
+
+  return {
+    user,
+    revokeResult,
+    deleted: (deleteResult.affectedRows || 0) > 0,
+  };
+}
+
 module.exports = {
   saveUserTokens,
   findUserByUid,
@@ -164,5 +229,9 @@ module.exports = {
   getUserFromSessionToken,
   refreshSession,
   clearUserSession,
+  revokeStoredNaverAccessToken,
+  revokeAllStoredNaverTokens,
+  logoutUserSession,
+  resetUserForDev,
   isAccessTokenExpired,
 };

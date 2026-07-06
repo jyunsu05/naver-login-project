@@ -48,8 +48,13 @@
       result.textContent = JSON.stringify(payload, null, 2);
     }
 
-    if (typeof Unity !== 'undefined' && typeof Unity.call === 'function') {
+    const params = new URLSearchParams(window.location.search);
+    const displayOnly = params.get('display') === '1';
+
+    if (!displayOnly && typeof Unity !== 'undefined' && typeof Unity.call === 'function') {
       Unity.call(JSON.stringify(payload));
+    } else if (!displayOnly && params.get('unity') === '1') {
+      window.location.href = 'unity://callback?data=' + encodeURIComponent(JSON.stringify(payload));
     }
   </script>
 </body>

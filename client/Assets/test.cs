@@ -1,7 +1,12 @@
+using System;
 using System.Collections;
-using Gree.UnityWebView;
+using System.Diagnostics;
+using System.IO;
 using Newtonsoft.Json.Linq;
+using TMPro;
 using UnityEngine;
+using UnityEngine.Events;
+using UnityEngine.SceneManagement;
 using UnityEngine.UI;
 
 public class test : MonoBehaviour
@@ -11,34 +16,131 @@ public class test : MonoBehaviour
     [SerializeField] private string authMeUrl = "http://127.0.0.1:3000/auth/me";
     [SerializeField] private string authRefreshUrl = "http://127.0.0.1:3000/auth/refresh";
     [SerializeField] private string logoutApiUrl = "http://127.0.0.1:3000/auth/logout";
+    [SerializeField] private string authBridgeUrl = "http://127.0.0.1:3000/auth/dev/session";
+    [SerializeField] private string loginSuccessUrl = "http://127.0.0.1:3000/login/success";
 
-    private WebViewObject webViewObject;
+    [Header("Browser Login")]
+    [SerializeField] private float browserLoginPollIntervalSeconds = 2f;
+    [SerializeField] private int browserLoginPollMaxAttempts = 150;
+
+    [Header("UI Buttons")]
+    [SerializeField] private Button naverLoginButton;
+    [SerializeField] private Button devLoginButton;
+    [SerializeField] private Button syncLoginButton;
+    [SerializeField] private Button logoutButton;
+
     private NaverLoginCallbackListener callbackListener;
-    private bool startupAutoLoginAttempted;
     private bool isLoggingIn;
+    private bool isLoggedIn;
+    private bool homeSceneRequested;
+
+    public bool IsLoginInProgress => isLoggingIn;
+    private string loggedInUserLabel = "로그인 필요";
+    private Coroutine browserLoginPollRoutine;
 
     private void Awake()
     {
         EnsureCallbackListener();
+
+        if (SceneManager.GetActiveScene().name == GameSceneNames.Title)
+        {
+            ResolveButtons();
+            BindUIButtons();
+        }
     }
 
-    private void Start()
+    public void BindUIButtons()
     {
-        var buttonObject = GameObject.Find("Button");
-        if (buttonObject != null)
+        var canvas = FindAnyObjectByType<Canvas>();
+        if (canvas != null)
         {
-            var button = buttonObject.GetComponent<Button>();
-            if (button != null)
+            foreach (var button in canvas.GetComponentsInChildren<Button>(true))
             {
-                button.onClick.AddListener(OnNaverLoginClicked);
+                var label = button.GetComponentInChildren<TMP_Text>(true)?.text?.Trim();
+                switch (label)
+                {
+                    case "네이버 로그인":
+                        BindButton(ref naverLoginButton, button, OnNaverLoginClicked);
+                        break;
+                    case "개발용 로그인":
+                        BindButton(ref devLoginButton, button, OpenDevLogin);
+                        break;
+                    case "웹뷰 닫기":
+                    case "로그인 동기화":
+                        BindButton(ref syncLoginButton, button, SyncLoginFromBrowser);
+                        break;
+                    case "로그아웃":
+                        BindButton(ref logoutButton, button, Logout);
+                        break;
+                }
             }
         }
 
-        if (!startupAutoLoginAttempted)
+        if (naverLoginButton == null)
         {
-            startupAutoLoginAttempted = true;
-            StartCoroutine(TryStartupAutoLogin());
+            var fallback = GameObject.Find("NaverLoginButton")?.GetComponent<Button>()
+                ?? GameObject.Find("Button")?.GetComponent<Button>();
+            if (fallback != null)
+            {
+                BindButton(ref naverLoginButton, fallback, OnNaverLoginClicked);
+            }
         }
+
+        if (devLoginButton == null)
+        {
+            var fallback = GameObject.Find("DevLoginButton")?.GetComponent<Button>();
+            if (fallback != null)
+            {
+                BindButton(ref devLoginButton, fallback, OpenDevLogin);
+            }
+        }
+
+        if (syncLoginButton == null)
+        {
+            var fallback = GameObject.Find("SyncLoginButton")?.GetComponent<Button>()
+                ?? GameObject.Find("CloseWebViewButton")?.GetComponent<Button>();
+            if (fallback != null)
+            {
+                BindButton(ref syncLoginButton, fallback, SyncLoginFromBrowser);
+            }
+        }
+    }
+
+    private void ResolveButtons()
+    {
+        if (naverLoginButton == null)
+        {
+            naverLoginButton = GameObject.Find("NaverLoginButton")?.GetComponent<Button>()
+                ?? GameObject.Find("Button")?.GetComponent<Button>();
+        }
+
+        if (devLoginButton == null)
+        {
+            devLoginButton = GameObject.Find("DevLoginButton")?.GetComponent<Button>();
+        }
+
+        if (syncLoginButton == null)
+        {
+            syncLoginButton = GameObject.Find("SyncLoginButton")?.GetComponent<Button>()
+                ?? GameObject.Find("CloseWebViewButton")?.GetComponent<Button>();
+        }
+
+        if (logoutButton == null)
+        {
+            logoutButton = GameObject.Find("LogoutButton")?.GetComponent<Button>();
+        }
+    }
+
+    private static void BindButton(ref Button field, Button button, UnityAction action)
+    {
+        if (button == null)
+        {
+            return;
+        }
+
+        field = button;
+        button.onClick.RemoveListener(action);
+        button.onClick.AddListener(action);
     }
 
     private void EnsureCallbackListener()
@@ -62,27 +164,113 @@ public class test : MonoBehaviour
     private void HandleCallbackToken(string sessionToken)
     {
         NaverLoginSession.SaveToken(sessionToken);
-        CloseWebView();
         StartCoroutine(CallAuthMe(sessionToken, openOAuthOnFail: false));
     }
 
     private void HandleCallbackError(string message)
     {
-        Debug.LogWarning($"[Naver] OAuth 콜백 오류: {message}");
-        CloseWebView();
+        UnityEngine.Debug.LogWarning($"[Naver] OAuth 콜백 오류: {message}");
     }
 
-    private IEnumerator TryStartupAutoLogin()
+    private IEnumerator TryAutoLogin()
     {
         var sessionToken = NaverLoginSession.GetToken();
+
         if (string.IsNullOrEmpty(sessionToken))
         {
-            Debug.Log("[Naver] 저장된 sessionToken 없음 - OAuth 필요 시 버튼 사용");
+            yield return TryFetchBrowserBridgeSession(token => sessionToken = token);
+        }
+
+        if (string.IsNullOrEmpty(sessionToken))
+        {
             yield break;
         }
 
-        Debug.Log("[Naver] 앱 시작 시 /auth/me 자동 로그인 시도");
         yield return CallAuthMe(sessionToken, openOAuthOnFail: false);
+    }
+
+    private IEnumerator TryFetchBrowserBridgeSession(Action<string> onTokenFound)
+    {
+        var bridgeToken = string.Empty;
+
+        yield return NaverLoginSession.GetJson(
+            authBridgeUrl,
+            responseText =>
+            {
+                try
+                {
+                    var json = JObject.Parse(responseText);
+                    var success = json["success"]?.Value<bool>() ?? false;
+                    if (!success)
+                    {
+                        return;
+                    }
+
+                    bridgeToken = json["data"]?["sessionToken"]?.ToString();
+                    if (!string.IsNullOrEmpty(bridgeToken))
+                    {
+                        NaverLoginSession.SaveToken(bridgeToken);
+                        UnityEngine.Debug.Log("[Naver] 브라우저 로그인 sessionToken을 PlayerPrefs에 저장했습니다");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    UnityEngine.Debug.LogWarning($"[Naver] 브라우저 세션 브리지 파싱 실패: {ex.Message}");
+                }
+            },
+            _ => { });
+
+        if (!string.IsNullOrEmpty(bridgeToken))
+        {
+            onTokenFound?.Invoke(bridgeToken);
+        }
+    }
+
+    private Coroutine titleEntryLoginRoutine;
+    private Coroutine buttonLoginRoutine;
+
+    public void BeginTitleEntryLogin()
+    {
+        if (titleEntryLoginRoutine != null)
+        {
+            StopCoroutine(titleEntryLoginRoutine);
+        }
+
+        titleEntryLoginRoutine = StartCoroutine(TitleEntryLoginRoutine());
+    }
+
+    private IEnumerator TitleEntryLoginRoutine()
+    {
+        TitleLoginOverlay.Ensure().Show();
+        yield return null;
+
+        if (isLoggedIn)
+        {
+            TitleLoginOverlay.Ensure().Hide();
+            titleEntryLoginRoutine = null;
+            yield break;
+        }
+
+        UnityEngine.Debug.Log("[Naver] Title 진입 자동 로그인 시도");
+        yield return TryAutoLogin();
+
+        if (isLoggedIn)
+        {
+            TitleLoginOverlay.Ensure().Hide();
+            titleEntryLoginRoutine = null;
+            yield break;
+        }
+
+        UnityEngine.Debug.Log("[Naver] Title 진입 자동 로그인 실패 - 브라우저 로그인으로 전환");
+        ContinueNaverLogin();
+
+        while (isLoggingIn)
+        {
+            yield return null;
+        }
+
+        EndLoginOverlayIfIdle();
+        titleEntryLoginRoutine = null;
     }
 
     private void OnNaverLoginClicked()
@@ -92,14 +280,76 @@ public class test : MonoBehaviour
             return;
         }
 
-        var sessionToken = NaverLoginSession.GetToken();
-        if (!string.IsNullOrEmpty(sessionToken))
+        if (buttonLoginRoutine != null)
         {
-            StartCoroutine(CallAuthMe(sessionToken, openOAuthOnFail: true));
+            StopCoroutine(buttonLoginRoutine);
+        }
+
+        buttonLoginRoutine = StartCoroutine(TryNaverLoginOnButtonClicked());
+    }
+
+    private IEnumerator TryNaverLoginOnButtonClicked()
+    {
+        TitleLoginOverlay.Ensure().Show();
+        yield return null;
+
+        if (isLoggedIn)
+        {
+            TitleLoginOverlay.Ensure().Hide();
+            yield break;
+        }
+
+        UnityEngine.Debug.Log("[Naver] 네이버 자동 로그인 시도");
+        yield return TryAutoLogin();
+
+        if (isLoggedIn)
+        {
+            TitleLoginOverlay.Ensure().Hide();
+            buttonLoginRoutine = null;
+            yield break;
+        }
+
+        UnityEngine.Debug.Log("[Naver] 자동 로그인 실패 - 브라우저 로그인으로 전환");
+        ContinueNaverLogin();
+
+        while (isLoggingIn)
+        {
+            yield return null;
+        }
+
+        EndLoginOverlayIfIdle();
+        buttonLoginRoutine = null;
+    }
+
+    private void EndLoginOverlayIfIdle()
+    {
+        if (isLoggingIn || isLoggedIn)
+        {
             return;
         }
 
-        OpenOAuth();
+        if (SceneManager.GetActiveScene().name != GameSceneNames.Title)
+        {
+            return;
+        }
+
+        TitleLoginOverlay.Ensure().Hide();
+    }
+
+    private void ContinueNaverLogin()
+    {
+        var sessionToken = NaverLoginSession.GetToken();
+
+        StopBrowserLoginPolling();
+        OpenInChrome(loginUrl);
+
+        if (!string.IsNullOrEmpty(sessionToken))
+        {
+            StartCoroutine(CallAuthMe(sessionToken, openOAuthOnFail: false));
+            return;
+        }
+
+        StartBrowserLoginPolling();
     }
 
     public void OpenNaverLogin()
@@ -114,21 +364,49 @@ public class test : MonoBehaviour
 
     public void OpenDevLogin()
     {
-        OpenUrl(devLoginUrl);
+        OpenInChrome(devLoginUrl);
     }
 
-    public void CloseWebView()
+    public void SyncLoginFromBrowser()
     {
-        if (webViewObject == null)
+        if (isLoggingIn)
         {
             return;
         }
 
-        webViewObject.SetVisibility(false);
+        TitleLoginOverlay.Ensure().Show();
+        StartCoroutine(SyncFromBrowserRoutine());
+    }
+
+    private IEnumerator SyncFromBrowserRoutine()
+    {
+        var sessionToken = NaverLoginSession.GetToken();
+        if (!string.IsNullOrEmpty(sessionToken))
+        {
+            yield return CallAuthMe(sessionToken, openOAuthOnFail: false);
+            EndLoginOverlayIfIdle();
+            yield break;
+        }
+
+        var bridgeToken = string.Empty;
+        yield return TryFetchBrowserBridgeSession(token => bridgeToken = token);
+
+        if (!string.IsNullOrEmpty(bridgeToken))
+        {
+            yield return CallAuthMe(bridgeToken, openOAuthOnFail: false);
+            EndLoginOverlayIfIdle();
+            yield break;
+        }
+
+        loggedInUserLabel = "브라우저 로그인 정보 없음";
+        UnityEngine.Debug.LogWarning("[Naver] 동기화할 브라우저 로그인 세션이 없습니다. 네이버 로그인 버튼으로 브라우저를 여세요.");
+        EndLoginOverlayIfIdle();
     }
 
     public void Logout()
     {
+        StopBrowserLoginPolling();
+
         var sessionToken = NaverLoginSession.GetToken();
         if (!string.IsNullOrEmpty(sessionToken))
         {
@@ -137,12 +415,33 @@ public class test : MonoBehaviour
         else
         {
             NaverLoginSession.ClearToken();
+            SetLoggedInState(false, null);
         }
+    }
+
+    private IEnumerator SendLogout(string sessionToken)
+    {
+        yield return NaverLoginSession.PostAuth(
+            logoutApiUrl,
+            sessionToken,
+            _ =>
+            {
+                NaverLoginSession.ClearToken();
+                SetLoggedInState(false, null);
+                UnityEngine.Debug.Log("[Naver] 로그아웃 완료");
+            },
+            error => UnityEngine.Debug.LogWarning($"[Naver] 로그아웃 요청 실패: {error}"));
+
+        yield return NaverLoginSession.DeleteJson(
+            authBridgeUrl,
+            () => UnityEngine.Debug.Log("[Naver] 브라우저 세션 브리지 삭제"),
+            error => UnityEngine.Debug.LogWarning($"[Naver] 브라우저 세션 브리지 삭제 실패: {error}"));
     }
 
     private IEnumerator CallAuthMe(string sessionToken, bool openOAuthOnFail)
     {
         isLoggingIn = true;
+        TitleLoginOverlay.Ensure().Show();
         var completed = false;
         var failed = false;
 
@@ -151,13 +450,13 @@ public class test : MonoBehaviour
             sessionToken,
             responseText =>
             {
-                Debug.Log($"[Naver] /auth/me 응답: {responseText}");
+                UnityEngine.Debug.Log($"[Naver] /auth/me 응답: {responseText}");
                 HandleLoginPayload(responseText);
                 completed = true;
             },
             error =>
             {
-                Debug.LogWarning($"[Naver] /auth/me 실패: {error}");
+                UnityEngine.Debug.LogWarning($"[Naver] /auth/me 실패: {error}");
                 failed = true;
             });
 
@@ -187,66 +486,180 @@ public class test : MonoBehaviour
             sessionToken,
             responseText =>
             {
-                Debug.Log($"[Naver] /auth/refresh 응답: {responseText}");
+                UnityEngine.Debug.Log($"[Naver] /auth/refresh 응답: {responseText}");
                 HandleLoginPayload(responseText);
                 completed = true;
             },
             error =>
             {
-                Debug.LogWarning($"[Naver] /auth/refresh 실패: {error}");
+                UnityEngine.Debug.LogWarning($"[Naver] /auth/refresh 실패: {error}");
                 failed = true;
             });
 
         if (failed || !completed)
         {
             NaverLoginSession.ClearToken();
+            SetLoggedInState(false, null);
             if (openOAuthOnFail)
             {
-                OpenOAuth();
+                OpenOAuthInBrowser();
             }
         }
     }
 
-    private IEnumerator SendLogout(string sessionToken)
+    private void SetLoggedInState(bool loggedIn, JToken user)
     {
-        yield return NaverLoginSession.PostAuth(
-            logoutApiUrl,
-            sessionToken,
-            _ =>
-            {
-                NaverLoginSession.ClearToken();
-                Debug.Log("[Naver] 로그아웃 완료");
-            },
-            error => Debug.LogWarning($"[Naver] 로그아웃 요청 실패: {error}"));
-    }
+        isLoggedIn = loggedIn;
 
-    private void OpenOAuth()
-    {
-        OpenUrl(loginUrl);
-    }
-
-    private void OpenUrl(string url)
-    {
-        if (webViewObject == null)
+        if (!loggedIn || user == null)
         {
-            webViewObject = new GameObject("NaverWebView").AddComponent<WebViewObject>();
+            loggedInUserLabel = "로그인 필요";
+            homeSceneRequested = false;
+            return;
         }
 
-        webViewObject.Init(
-            cb: OnWebMessage,
-            err: message => Debug.LogError($"[Naver] WebView error: {message}"),
-            httpErr: message => Debug.LogError($"[Naver] HTTP error: {message}"),
-            ld: message => Debug.Log($"[Naver] Loaded: {message}"),
-            started: message => Debug.Log($"[Naver] Started: {message}"),
-            hooked: message => Debug.Log($"[Naver] Hooked: {message}"),
-            transparent: false,
-            zoom: false,
-            ua: "Mozilla/5.0"
-        );
+        var name = user["name"]?.ToString();
+        var email = user["email"]?.ToString();
+        loggedInUserLabel = string.IsNullOrEmpty(name)
+            ? "로그인됨"
+            : $"로그인됨: {name} ({email})";
+    }
 
-        webViewObject.SetMargins(0, 0, 0, 0);
-        webViewObject.SetVisibility(true);
-        webViewObject.LoadURL(url);
+    private void NavigateToHomeScene()
+    {
+        if (homeSceneRequested)
+        {
+            return;
+        }
+
+        if (SceneManager.GetActiveScene().name == GameSceneNames.Home)
+        {
+            return;
+        }
+
+        homeSceneRequested = true;
+        App.Instance.GoToHome();
+    }
+
+    private void OpenOAuthInBrowser()
+    {
+        StopBrowserLoginPolling();
+        OpenInChrome(loginUrl);
+        StartBrowserLoginPolling();
+    }
+
+    private void OpenInChrome(string url)
+    {
+        if (string.IsNullOrWhiteSpace(url))
+        {
+            return;
+        }
+
+#if UNITY_EDITOR_WIN || UNITY_STANDALONE_WIN
+        if (TryOpenChrome(url))
+        {
+            UnityEngine.Debug.Log($"[Naver] Chrome에서 열기: {url}");
+            return;
+        }
+#endif
+
+        Application.OpenURL(url);
+        UnityEngine.Debug.Log($"[Naver] 기본 브라우저에서 열기: {url}");
+    }
+
+#if UNITY_EDITOR_WIN || UNITY_STANDALONE_WIN
+    private static bool TryOpenChrome(string url)
+    {
+        var localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+        var chromeCandidates = new[]
+        {
+            Path.Combine(localAppData, "Google", "Chrome", "Application", "chrome.exe"),
+            @"C:\Program Files\Google\Chrome\Application\chrome.exe",
+            @"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+        };
+
+        foreach (var chromePath in chromeCandidates)
+        {
+            if (!File.Exists(chromePath))
+            {
+                continue;
+            }
+
+            try
+            {
+                Process.Start(new ProcessStartInfo
+                {
+                    FileName = chromePath,
+                    Arguments = $"\"{url}\"",
+                    UseShellExecute = true,
+                });
+                return true;
+            }
+            catch (Exception ex)
+            {
+                UnityEngine.Debug.LogWarning($"[Naver] Chrome 실행 실패 ({chromePath}): {ex.Message}");
+            }
+        }
+
+        return false;
+    }
+#endif
+
+    private void StartBrowserLoginPolling()
+    {
+        StopBrowserLoginPolling();
+        browserLoginPollRoutine = StartCoroutine(PollBrowserLoginRoutine());
+    }
+
+    private void StopBrowserLoginPolling()
+    {
+        if (browserLoginPollRoutine != null)
+        {
+            StopCoroutine(browserLoginPollRoutine);
+            browserLoginPollRoutine = null;
+        }
+
+        isLoggingIn = false;
+    }
+
+    private IEnumerator PollBrowserLoginRoutine()
+    {
+        loggedInUserLabel = "브라우저에서 로그인해 주세요...";
+        isLoggingIn = true;
+        TitleLoginOverlay.Ensure().Show();
+
+        for (var attempt = 0; attempt < browserLoginPollMaxAttempts; attempt++)
+        {
+            if (isLoggedIn)
+            {
+                break;
+            }
+
+            var bridgeToken = string.Empty;
+            yield return TryFetchBrowserBridgeSession(token => bridgeToken = token);
+
+            if (!string.IsNullOrEmpty(bridgeToken))
+            {
+                yield return CallAuthMe(bridgeToken, openOAuthOnFail: false);
+                break;
+            }
+
+            yield return new WaitForSeconds(browserLoginPollIntervalSeconds);
+        }
+
+        if (!isLoggedIn)
+        {
+            loggedInUserLabel = "로그인 필요";
+            UnityEngine.Debug.LogWarning("[Naver] 브라우저 로그인 대기 시간이 초과되었습니다. 로그인 동기화 버튼을 눌러 주세요.");
+        }
+
+        isLoggingIn = false;
+        if (!isLoggedIn)
+        {
+            EndLoginOverlayIfIdle();
+        }
+
+        browserLoginPollRoutine = null;
     }
 
     private void HandleLoginPayload(string message)
@@ -258,7 +671,8 @@ public class test : MonoBehaviour
 
             if (!success)
             {
-                Debug.LogWarning($"[Naver] 로그인 실패: {json["message"]}");
+                UnityEngine.Debug.LogWarning($"[Naver] 로그인 실패: {json["message"]}");
+                SetLoggedInState(false, null);
                 return;
             }
 
@@ -266,7 +680,7 @@ public class test : MonoBehaviour
             if (!string.IsNullOrEmpty(sessionToken))
             {
                 NaverLoginSession.SaveToken(sessionToken);
-                Debug.Log("[Naver] sessionToken 저장 완료");
+                UnityEngine.Debug.Log("[Naver] sessionToken 저장 완료");
             }
 
             var loginType = json["data"]?["loginType"]?.ToString();
@@ -274,83 +688,45 @@ public class test : MonoBehaviour
 
             if (user != null)
             {
+                SetLoggedInState(true, user);
+                StopBrowserLoginPolling();
+                TitleLoginOverlay.Ensure().Hide();
+                NavigateToHomeScene();
                 var uid = user["uid"]?.ToString();
                 var email = user["email"]?.ToString();
                 var name = user["name"]?.ToString();
-                Debug.Log($"loginType: {loginType}\nuid: {uid}\nemail: {email}\nname: {name}");
+                UnityEngine.Debug.Log($"loginType: {loginType}\nuid: {uid}\nemail: {email}\nname: {name}");
             }
         }
-        catch (System.Exception ex)
+        catch (Exception ex)
         {
-            Debug.LogError($"[Naver] JSON 파싱 실패: {ex.Message}");
+            UnityEngine.Debug.LogError($"[Naver] JSON 파싱 실패: {ex.Message}");
         }
-    }
-
-    private void OnWebMessage(string message)
-    {
-        Debug.Log($"[Naver] WebView 메시지: {message}");
-        HandleLoginPayload(message);
-        CloseWebView();
-    }
-
-    private void OnGUI()
-    {
-        if (!Application.isPlaying)
-        {
-            return;
-        }
-
-        const int width = 320;
-        const int height = 56;
-        const int x = 20;
-        var y = 20;
-
-        GUI.backgroundColor = new Color(0.01f, 0.78f, 0.35f);
-        if (GUI.Button(new Rect(x, y, width, height), "네이버 로그인"))
-        {
-            OnNaverLoginClicked();
-        }
-
-        y += height + 12;
-        GUI.backgroundColor = new Color(0.2f, 0.45f, 0.95f);
-        if (GUI.Button(new Rect(x, y, width, height), "개발용 로그인"))
-        {
-            OpenDevLogin();
-        }
-
-        y += height + 12;
-        GUI.backgroundColor = new Color(0.85f, 0.3f, 0.25f);
-        if (GUI.Button(new Rect(x, y, width, height), "웹뷰 닫기"))
-        {
-            CloseWebView();
-        }
-
-        y += height + 12;
-        GUI.backgroundColor = Color.gray;
-        if (GUI.Button(new Rect(x, y, width, height), "로그아웃"))
-        {
-            Logout();
-        }
-
-        GUI.backgroundColor = Color.white;
     }
 
     private void OnDestroy()
     {
+        StopBrowserLoginPolling();
+
         if (callbackListener != null)
         {
             callbackListener.OnTokenReceived -= HandleCallbackToken;
             callbackListener.OnErrorReceived -= HandleCallbackError;
         }
 
-        var buttonObject = GameObject.Find("Button");
-        if (buttonObject != null)
+        UnbindButton(naverLoginButton, OnNaverLoginClicked);
+        UnbindButton(devLoginButton, OpenDevLogin);
+        UnbindButton(syncLoginButton, SyncLoginFromBrowser);
+        UnbindButton(logoutButton, Logout);
+    }
+
+    private static void UnbindButton(Button button, UnityAction action)
+    {
+        if (button == null)
         {
-            var button = buttonObject.GetComponent<Button>();
-            if (button != null)
-            {
-                button.onClick.RemoveListener(OnNaverLoginClicked);
-            }
+            return;
         }
+
+        button.onClick.RemoveListener(action);
     }
 }

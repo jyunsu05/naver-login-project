@@ -82,6 +82,38 @@ async function exchangeCodeForToken(code, state) {
   return data;
 }
 
+async function revokeAccessToken(accessToken) {
+  if (!accessToken) {
+    throw new Error('폐기할 access token이 없습니다.');
+  }
+
+  const { clientId, clientSecret } = getConfig();
+  const params = new URLSearchParams({
+    grant_type: 'delete',
+    client_id: clientId,
+    client_secret: clientSecret,
+    access_token: accessToken,
+    service_provider: 'NAVER',
+  });
+
+  const response = await fetch(NAVER_TOKEN_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: params.toString(),
+  });
+  const data = await response.json();
+
+  if (!response.ok || data.error) {
+    throw new Error(data.error_description || data.error || '네이버 토큰 폐기 실패');
+  }
+
+  if (data.result && data.result !== 'success') {
+    throw new Error('네이버 토큰 폐기 실패');
+  }
+
+  return data;
+}
+
 async function refreshAccessToken(refreshToken) {
   if (!refreshToken) {
     throw new Error('refresh token이 없습니다.');
@@ -132,6 +164,7 @@ function mapProfileToUser(profile) {
 module.exports = {
   buildAuthorizeUrl,
   exchangeCodeForToken,
+  revokeAccessToken,
   refreshAccessToken,
   fetchProfile,
   mapProfileToUser,

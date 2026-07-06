@@ -164,7 +164,7 @@ public class NaverLoginCallbackListener : MonoBehaviour
 
 public static class NaverLoginSession
 {
-    private const string SessionTokenKey = "naver_session_token";
+    public const string SessionTokenKey = "naver_session_token";
 
     public static string GetToken()
     {
@@ -181,6 +181,83 @@ public static class NaverLoginSession
     {
         PlayerPrefs.DeleteKey(SessionTokenKey);
         PlayerPrefs.Save();
+    }
+
+    public static IEnumerator GetJson(string url, Action<string> onSuccess, Action<string> onError)
+    {
+        using var request = UnityWebRequest.Get(url);
+        request.SetRequestHeader("Accept", "application/json");
+        yield return request.SendWebRequest();
+
+        if (request.result == UnityWebRequest.Result.Success)
+        {
+            onSuccess?.Invoke(request.downloadHandler.text);
+            yield break;
+        }
+
+        onError?.Invoke(request.error);
+    }
+
+    public static IEnumerator DeleteJson(string url, Action onSuccess, Action<string> onError)
+    {
+        using var request = UnityWebRequest.Delete(url);
+        request.downloadHandler = new DownloadHandlerBuffer();
+        yield return request.SendWebRequest();
+
+        if (request.result == UnityWebRequest.Result.Success)
+        {
+            onSuccess?.Invoke();
+            yield break;
+        }
+
+        onError?.Invoke(request.error);
+    }
+
+    public static IEnumerator GetAuthJson(string url, string sessionToken, Action<string> onSuccess, Action<string> onError)
+    {
+        using var request = UnityWebRequest.Get(url);
+        request.SetRequestHeader("Accept", "application/json");
+        request.SetRequestHeader("Authorization", $"Bearer {sessionToken}");
+        yield return request.SendWebRequest();
+
+        if (request.result == UnityWebRequest.Result.Success)
+        {
+            onSuccess?.Invoke(request.downloadHandler.text);
+            yield break;
+        }
+
+        onError?.Invoke(request.error);
+    }
+
+    public static IEnumerator PostAuthJson(
+        string url,
+        string sessionToken,
+        JObject body,
+        Action<string> onSuccess,
+        Action<string> onError)
+    {
+        if (body != null && !body.ContainsKey("sessionToken"))
+        {
+            body["sessionToken"] = sessionToken;
+        }
+
+        var bodyBytes = Encoding.UTF8.GetBytes(body?.ToString() ?? "{}");
+        using var request = new UnityWebRequest(url, "POST");
+        request.uploadHandler = new UploadHandlerRaw(bodyBytes);
+        request.downloadHandler = new DownloadHandlerBuffer();
+        request.SetRequestHeader("Content-Type", "application/json");
+        request.SetRequestHeader("Accept", "application/json");
+        request.SetRequestHeader("Authorization", $"Bearer {sessionToken}");
+
+        yield return request.SendWebRequest();
+
+        if (request.result == UnityWebRequest.Result.Success)
+        {
+            onSuccess?.Invoke(request.downloadHandler.text);
+            yield break;
+        }
+
+        onError?.Invoke(request.error);
     }
 
     public static IEnumerator PostAuth(string url, string sessionToken, Action<string> onSuccess, Action<string> onError)
