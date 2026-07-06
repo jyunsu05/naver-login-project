@@ -1,0 +1,25 @@
+{
+  "name": "my-expressserver4",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "start": "node app.js",
+    "mysql:test": "node test-db.js",
+    "mysql:create-users-table": "node create-users-table.js",
+    "mysql:reset-users-table": "node reset-users-table.js",
+    "mysql:insert-user": "node test-user-insert.js",
+    "mysql:select-users": "node test-user-select.js",
+    "login:test-response": "node test-login-response.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
+    "mysql2": "^3.22.5"
+  }
+}

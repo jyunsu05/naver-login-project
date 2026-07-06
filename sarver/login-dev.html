@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>개발용 테스트 로그인</title>
+</head>
+<body>
+  <h1>개발용 테스트 로그인 (mock)</h1>
+  <p><a href="/login">네이버 로그인으로 돌아가기</a></p>
+  <form id="loginForm">
+    <p>
+      <label for="sub">UID (sub)</label><br>
+      <input type="text" id="sub" name="sub" value="123456789012345678901" required>
+    </p>
+    <p>
+      <label for="email">Email</label><br>
+      <input type="email" id="email" name="email" value="hong@gmail.com" required>
+    </p>
+    <p>
+      <label for="name">Name</label><br>
+      <input type="text" id="name" name="name" value="홍길동" required>
+    </p>
+    <p>
+      <button type="submit">테스트 로그인</button>
+    </p>
+  </form>
+  <p id="message"></p>
+  <pre id="result"></pre>
+  <script>
+    const form = document.getElementById('loginForm');
+    const message = document.getElementById('message');
+    const result = document.getElementById('result');
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      message.textContent = '';
+      result.textContent = '';
+
+      const response = await fetch('/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          sub: document.getElementById('sub').value.trim(),
+          email: document.getElementById('email').value.trim(),
+          name: document.getElementById('name').value.trim(),
+        }),
+      });
+
+      const data = await response.json();
+      result.textContent = JSON.stringify(data, null, 2);
+
+      if (response.ok && data.success) {
+        message.textContent = data.message;
+        message.style.color = 'green';
+        return;
+      }
+
+      message.textContent = data.message || '로그인 실패';
+      message.style.color = 'red';
+    });
+  </script>
+</body>
+</html>
