@@ -5,11 +5,15 @@ const DROP_USERS_TABLE_SQL = 'DROP TABLE IF EXISTS users';
 
 const CREATE_USERS_TABLE_SQL = `
   CREATE TABLE users (
-    id         INT          NOT NULL AUTO_INCREMENT,
-    uid        VARCHAR(64)  NOT NULL,
-    email      VARCHAR(100) NOT NULL,
-    name       VARCHAR(50)  NOT NULL,
-    created_at TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    id                  INT          NOT NULL AUTO_INCREMENT,
+    uid                 VARCHAR(64)  NOT NULL,
+    email               VARCHAR(100) NOT NULL,
+    name                VARCHAR(50)  NOT NULL,
+    naver_access_token  TEXT         NULL,
+    naver_refresh_token TEXT         NULL,
+    token_expires_at    DATETIME     NULL,
+    session_version     INT          NOT NULL DEFAULT 0,
+    created_at          TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
     PRIMARY KEY (id),
     UNIQUE KEY UK_users_uid (uid)
@@ -45,7 +49,7 @@ async function resetUsersTable() {
   return {
     database: config.database,
     table: 'users',
-    columns: ['id', 'uid', 'email', 'name', 'created_at'],
+    columns: ['id', 'uid', 'email', 'name', 'naver_access_token', 'naver_refresh_token', 'token_expires_at', 'session_version', 'created_at'],
   };
 }
 
