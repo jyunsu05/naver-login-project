@@ -6,7 +6,7 @@ const fs = require('fs');
 const { upsertUser } = require('./user-insert');
 const { validateLoginBody, loginSuccess, loginError, formatUserOutput } = require('./login-response');
 const naverAuth = require('./naver-auth');
-const { saveUserTokens, getUserFromSessionToken } = require('./user-tokens');
+const { saveUserTokens, getUserFromSessionToken, refreshSession } = require('./user-tokens');
 const { ensureTokenColumns } = require('./user-schema');
 const { extractSessionToken } = require('./session-jwt');
 const logger = require('./logger');
@@ -162,6 +162,26 @@ app.post('/auth/me', async (req, res) => {
     return res.status(200).json(response);
   } catch (err) {
     logger.error('NAVER', '/auth/me 실패', err.message);
+    const error = loginError(err.message, 401);
+    return res.status(error.statusCode).json(error.body);
+  }
+});
+
+app.post('/auth/refresh', async (req, res) => {
+  const sessionToken = extractSessionToken(req);
+
+  if (!sessionToken) {
+    const error = loginError('sessionToken이 필요합니다.', 400);
+    return res.status(error.statusCode).json(error.body);
+  }
+
+  try {
+    const { user, sessionToken: refreshedToken } = await refreshSession(sessionToken);
+    const response = loginSuccess(user, { reused: true, sessionToken: refreshedToken });
+    logger.log('NAVER', '/auth/refresh 성공', { uid: user.uid });
+    return res.status(200).json(response);
+  } catch (err) {
+    logger.error('NAVER', '/auth/refresh 실패', err.message);
     const error = loginError(err.message, 401);
     return res.status(error.statusCode).json(error.body);
   }

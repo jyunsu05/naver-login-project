@@ -1,7 +1,11 @@
+const naverAuth = require('./naver-auth');
+const { upsertUser } = require('./user-insert');
 const { query, execute } = require('./dbconnect');
 const { encryptText, decryptText } = require('./crypto-utils');
 const { issueSessionToken, verifyJwt } = require('./session-jwt');
 const logger = require('./logger');
+
+const TOKEN_EXPIRY_BUFFER_MS = 60 * 1000;
 
 const USER_COLUMNS = `
   id, uid, email, name, created_at,
@@ -11,6 +15,14 @@ const USER_COLUMNS = `
 function computeExpiresAt(expiresIn) {
   const seconds = Number(expiresIn) > 0 ? Number(expiresIn) : 3600;
   return new Date(Date.now() + seconds * 1000);
+}
+
+function isAccessTokenExpired(tokenExpiresAt) {
+  if (!tokenExpiresAt) {
+    return true;
+  }
+
+  return new Date(tokenExpiresAt).getTime() <= Date.now() + TOKEN_EXPIRY_BUFFER_MS;
 }
 
 function mapUserRow(row) {
@@ -78,9 +90,66 @@ async function getUserFromSessionToken(sessionToken) {
   return user;
 }
 
+async function updateStoredTokens(uid, tokenData) {
+  const tokenExpiresAt = computeExpiresAt(tokenData.expires_in);
+
+  await execute(
+    `UPDATE users
+     SET naver_access_token = ?,
+         naver_refresh_token = COALESCE(?, naver_refresh_token),
+         token_expires_at = ?
+     WHERE uid = ?`,
+    [
+      encryptText(tokenData.access_token),
+      tokenData.refresh_token ? encryptText(tokenData.refresh_token) : null,
+      tokenExpiresAt,
+      uid,
+    ],
+  );
+
+  return findUserByUid(uid);
+}
+
+async function refreshNaverTokensIfNeeded(user) {
+  if (!user.naver_refresh_token && isAccessTokenExpired(user.token_expires_at)) {
+    throw new Error('저장된 로그인 정보가 만료되었습니다. 다시 네이버 로그인이 필요합니다.');
+  }
+
+  if (!isAccessTokenExpired(user.token_expires_at)) {
+    return user;
+  }
+
+  logger.log('NAVER', 'access token 만료, refresh token으로 갱신 시도', { uid: user.uid });
+  const tokenData = await naverAuth.refreshAccessToken(user.naver_refresh_token);
+  return updateStoredTokens(user.uid, tokenData);
+}
+
+async function loginWithStoredTokens(user) {
+  const refreshedUser = await refreshNaverTokensIfNeeded(user);
+  const profile = await naverAuth.fetchProfile(refreshedUser.naver_access_token);
+  const mapped = naverAuth.mapProfileToUser(profile);
+  const updatedUser = await upsertUser(mapped);
+  const latestUser = await findUserByUid(updatedUser.uid);
+  const sessionToken = issueSessionToken(latestUser);
+
+  logger.log('NAVER', '저장된 토큰으로 자동 로그인 성공', {
+    uid: latestUser.uid,
+    email: latestUser.email,
+  });
+
+  return { user: latestUser, sessionToken };
+}
+
+async function refreshSession(sessionToken) {
+  const user = await getUserFromSessionToken(sessionToken);
+  return loginWithStoredTokens(user);
+}
+
 module.exports = {
   saveUserTokens,
   findUserByUid,
   mapUserRow,
   getUserFromSessionToken,
+  refreshSession,
+  isAccessTokenExpired,
 };
