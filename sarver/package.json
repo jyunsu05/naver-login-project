@@ -8,6 +8,7 @@
     "mysql:test": "node test-db.js",
     "mysql:create-users-table": "node create-users-table.js",
     "mysql:reset-users-table": "node reset-users-table.js",
+    "mysql:test-user-schema": "node test-user-schema.js",
     "mysql:insert-user": "node test-user-insert.js",
     "mysql:select-users": "node test-user-select.js",
     "login:test-response": "node test-login-response.js",
