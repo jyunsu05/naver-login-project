@@ -16,6 +16,21 @@ const app = express();
 const PORT = 3000;
 const HOST = '127.0.0.1';
 
+function getUnityCallbackUrl() {
+  return process.env.UNITY_CALLBACK_URL || 'http://127.0.0.1:7777/naver-login/';
+}
+
+function redirectToUnity(res, params) {
+  const url = new URL(getUnityCallbackUrl());
+  Object.entries(params).forEach(([key, value]) => {
+    if (value !== undefined && value !== null && value !== '') {
+      url.searchParams.set(key, String(value));
+    }
+  });
+
+  res.redirect(url.toString());
+}
+
 function sendHtml(res, fileName, options = {}) {
   res.set({
     'Cache-Control': 'no-store',
@@ -108,13 +123,11 @@ app.get('/auth/naver/callback', async (req, res) => {
 
   if (error) {
     logger.warn('NAVER', '네이버 인증 거부', { error, errorDescription });
-    const loginErr = loginError(errorDescription || error, 400);
-    return sendLoginResultPage(res, loginErr.body, loginErr.statusCode);
+    return redirectToUnity(res, { error: errorDescription || error });
   }
 
   if (!code || !state) {
-    const loginErr = loginError('code 또는 state가 없습니다.', 400);
-    return sendLoginResultPage(res, loginErr.body, loginErr.statusCode);
+    return redirectToUnity(res, { error: 'code 또는 state가 없습니다.' });
   }
 
   try {
@@ -138,12 +151,16 @@ app.get('/auth/naver/callback', async (req, res) => {
 
     const response = loginSuccess(savedUser, { sessionToken });
     logger.log('NAVER', '사용자 정보\n' + formatUserOutput(savedUser));
-    logger.log('NAVER', '응답 JSON', response);
-    return sendLoginResultPage(res, response);
+    logger.log('NAVER', 'Unity 콜백으로 sessionToken 전달');
+
+    if (req.query.format === 'json') {
+      return res.status(200).json(response);
+    }
+
+    return redirectToUnity(res, { token: sessionToken });
   } catch (err) {
     logger.error('NAVER', '네이버 로그인 콜백 실패', err.message);
-    const loginErr = loginError(err.message, 500);
-    return sendLoginResultPage(res, loginErr.body, loginErr.statusCode);
+    return redirectToUnity(res, { error: err.message });
   }
 });
 
@@ -218,6 +235,7 @@ app.listen(PORT, HOST, async () => {
   logger.log('SERVER', '네이버 로그인', {
     callbackUrl: process.env.NAVER_CALLBACK_URL,
     loginUrl: `http://${HOST}:${PORT}/login`,
+    unityCallbackUrl: getUnityCallbackUrl(),
   });
   logger.log('SERVER', 'DB 설정', {
     host: config.host,
