@@ -1,3 +1,4 @@
+using System.Collections;
 using Gree.UnityWebView;
 using Newtonsoft.Json.Linq;
 using UnityEngine;
@@ -5,9 +6,11 @@ using UnityEngine.UI;
 
 public class test : MonoBehaviour
 {
-    [SerializeField] private string loginUrl = "http://127.0.0.1:3000/login";
+    [SerializeField] private string loginUrl = "http://127.0.0.1:3000/auth/naver";
+    [SerializeField] private string authMeUrl = "http://127.0.0.1:3000/auth/me";
 
     private WebViewObject webViewObject;
+    private bool startupAutoLoginAttempted;
 
     private void Start()
     {
@@ -20,6 +23,33 @@ public class test : MonoBehaviour
                 button.onClick.AddListener(OpenNaverLogin);
             }
         }
+
+        if (!startupAutoLoginAttempted)
+        {
+            startupAutoLoginAttempted = true;
+            StartCoroutine(TryStartupAutoLogin());
+        }
+    }
+
+    private IEnumerator TryStartupAutoLogin()
+    {
+        var sessionToken = NaverLoginSession.GetToken();
+        if (string.IsNullOrEmpty(sessionToken))
+        {
+            Debug.Log("[Naver] 저장된 sessionToken 없음 - OAuth 필요 시 버튼 사용");
+            yield break;
+        }
+
+        Debug.Log("[Naver] 앱 시작 시 /auth/me 자동 로그인 시도");
+        yield return NaverLoginSession.PostAuth(
+            authMeUrl,
+            sessionToken,
+            responseText =>
+            {
+                Debug.Log($"[Naver] /auth/me 응답: {responseText}");
+                HandleLoginPayload(responseText);
+            },
+            error => Debug.LogWarning($"[Naver] /auth/me 실패: {error}"));
     }
 
     public void OpenNaverLogin()
@@ -51,13 +81,27 @@ public class test : MonoBehaviour
         OpenNaverLogin();
     }
 
-    private void OnWebMessage(string message)
+    private void HandleLoginPayload(string message)
     {
-        Debug.Log($"[Naver] 응답 JSON: {message}");
-
         try
         {
             var json = JObject.Parse(message);
+            var success = json["success"]?.Value<bool>() ?? false;
+
+            if (!success)
+            {
+                Debug.LogWarning($"[Naver] 로그인 실패: {json["message"]}");
+                return;
+            }
+
+            var sessionToken = json["data"]?["sessionToken"]?.ToString();
+            if (!string.IsNullOrEmpty(sessionToken))
+            {
+                NaverLoginSession.SaveToken(sessionToken);
+                Debug.Log("[Naver] sessionToken 저장 완료");
+            }
+
+            var loginType = json["data"]?["loginType"]?.ToString();
             var user = json["data"]?["user"];
 
             if (user != null)
@@ -65,18 +109,19 @@ public class test : MonoBehaviour
                 var uid = user["uid"]?.ToString();
                 var email = user["email"]?.ToString();
                 var name = user["name"]?.ToString();
-
-                Debug.Log($"uid: {uid}\nemail: {email}\nname: {name}");
-            }
-            else
-            {
-                Debug.LogWarning("[Naver] user 정보가 응답에 없습니다.");
+                Debug.Log($"loginType: {loginType}\nuid: {uid}\nemail: {email}\nname: {name}");
             }
         }
         catch (System.Exception ex)
         {
             Debug.LogError($"[Naver] JSON 파싱 실패: {ex.Message}");
         }
+    }
+
+    private void OnWebMessage(string message)
+    {
+        Debug.Log($"[Naver] 응답 JSON: {message}");
+        HandleLoginPayload(message);
 
         if (webViewObject != null)
         {
